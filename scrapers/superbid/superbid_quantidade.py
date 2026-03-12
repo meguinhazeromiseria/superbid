@@ -4,10 +4,9 @@
 superbid_quantidade.py — Superbid lotes em quantidade → auctions.quantidade
 
 Uso:
-    python superbid_quantidade.py                   # coleta tudo e sobe
-    python superbid_quantidade.py --no-upload       # só JSON
+    python superbid_quantidade.py              # coleta e sobe
+    python superbid_quantidade.py --no-upload  # só JSON
     python superbid_quantidade.py --show-all
-    python superbid_quantidade.py --category acessorios
     python superbid_quantidade.py --output meu.json
 """
 
@@ -39,19 +38,9 @@ DIM    = "\033[2m"
 API_URL  = "https://offer-query.superbid.net/seo/offers/"
 SITE_URL = "https://exchange.superbid.net"
 
-# (filter_value, display_name, tipo_no_db)
-# filter_value = valor de product.subCategory.description na API
+# pageNumber começa em 0 na API (confirmado no DevTools)
 CATEGORIES = [
-    ("acessorios",  "Acessórios",   "acessorio"),
-    ("vestuarios",  "Vestuários",   "vestuario"),
-    ("calcados",    "Calçados",     "calcado"),
-    ("eletronicos", "Eletrônicos",  "eletronico"),
-    ("informatica", "Informática",  "informatica"),
-    ("ferramentas", "Ferramentas",  "ferramenta"),
-    ("moveis",      "Móveis",       "movel"),
-    ("brinquedos",  "Brinquedos",   "brinquedo"),
-    ("alimentos",   "Alimentos",    "alimento"),
-    ("cosmeticos",  "Cosméticos",   "cosmetico"),
+    ("smartwatch", "Smartwatches", "smartwatch"),
 ]
 
 HEADERS = {
@@ -121,14 +110,14 @@ def parse_data_iso(raw) -> Optional[str]:
 
 
 def parse_cidade_estado(location: dict) -> tuple:
-    """Extrai cidade e estado do objeto product.location da API."""
-    city_str = location.get("city") or ""  # ex: "Goiânia - GO"
+    """product.location.city = 'Goiânia - GO' → ('Goiânia', 'GO')"""
+    city_str = (location.get("city") or "").strip()
     if not city_str:
         return None, None
-    m = re.match(r"^(.+?)\s*-\s*([A-Z]{2})\s*$", city_str.strip())
+    m = re.match(r"^(.+?)\s*-\s*([A-Z]{2})\s*$", city_str)
     if m:
         return m.group(1).strip(), m.group(2)
-    return city_str.strip(), None
+    return city_str, None
 
 
 def parse_images_gallery(gallery_json: list) -> list:
@@ -143,7 +132,6 @@ def parse_images_gallery(gallery_json: list) -> list:
 
 
 def extract_quantidade(titulo: str) -> Optional[int]:
-    """Extrai quantidade aproximada do título: 'APROX.: 8.000 PÇS' → 8000."""
     m = RE_QTDE.search(titulo or "")
     if not m:
         return None
@@ -158,13 +146,8 @@ def extract_quantidade(titulo: str) -> Optional[int]:
 
 def scrape_category(filter_value: str, display_name: str,
                     session: requests.Session, page_size: int = 30) -> list:
-    """
-    Parâmetros exatos confirmados via DevTools Network:
-    filter, keyword, urlSeo, searchType, locale, portalId,
-    requestOrigin, timeZoneId, orderBy, pageNumber, pageSize
-    """
     items = []
-    page_num = 1
+    page_num = 0   # API usa pageNumber base-0
     consecutive_errors = 0
     max_errors = 3
 
@@ -174,17 +157,17 @@ def scrape_category(filter_value: str, display_name: str,
     while True:
         try:
             params = {
-                "filter":         f"product.subCategory.description:{filter_value}",
-                "keyword":        "aprox",
-                "urlSeo":         f"{SITE_URL}/busca/aprox",
-                "searchType":     "opened",
-                "locale":         "pt_BR",
-                "portalId":       "[2,15]",
-                "requestOrigin":  "marketplace",
-                "timeZoneId":     "America/Sao_Paulo",
-                "orderBy":        "score:desc",
-                "pageNumber":     page_num,
-                "pageSize":       page_size,
+                "filter":        f"product.subCategory.description:{filter_value}",
+                "keyword":       "aprox",
+                "urlSeo":        f"{SITE_URL}/busca/aprox",
+                "searchType":    "opened",
+                "locale":        "pt_BR",
+                "portalId":      "[2,15]",
+                "requestOrigin": "marketplace",
+                "timeZoneId":    "America/Sao_Paulo",
+                "orderBy":       "score:desc",
+                "pageNumber":    page_num,
+                "pageSize":      page_size,
             }
 
             r = session.get(API_URL, params=params, timeout=30)
@@ -209,7 +192,7 @@ def scrape_category(filter_value: str, display_name: str,
             print(f"  {DIM}Página {page_num}: {len(offers)} ofertas (total: {total}){RESET}")
             items.extend(offers)
 
-            start = data.get("start", (page_num - 1) * page_size)
+            start = data.get("start", page_num * page_size)
             if start + len(offers) >= total:
                 break
 
@@ -251,11 +234,9 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
 
         link = f"{SITE_URL}/oferta/{offer_id}"
 
-        # Localização vem em product.location.city = "Goiânia - GO"
         location = product.get("location") or {}
         cidade, estado = parse_cidade_estado(location)
 
-        # Valores — a API retorna price e offerDetail
         offer_detail  = offer.get("offerDetail") or {}
         valor_inicial = parse_valor(offer_detail.get("initialBidValue") or offer.get("price"))
         valor_atual   = parse_valor(
@@ -264,16 +245,13 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
             or offer.get("price")
         )
 
-        # Data encerramento
         data_enc = parse_data_iso(offer.get("endDate") or offer.get("endDateTime"))
 
-        # Imagens
         gallery = product.get("galleryJson") or []
         imagens = parse_images_gallery(gallery)
         if not imagens and product.get("thumbnailUrl"):
             imagens = [product["thumbnailUrl"]]
 
-        # Modalidade
         auction       = offer.get("auction") or {}
         modality_desc = (auction.get("modalityDesc") or "").lower()
         modalidade    = (
@@ -282,10 +260,7 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
             else "leilao"
         )
 
-        # Subcategoria original do Superbid
-        sub_cat = (product.get("subCategory") or {}).get("description") or None
-
-        # Quantidade extraída do título
+        sub_cat          = (product.get("subCategory") or {}).get("description") or None
         quantidade_aprox = extract_quantidade(titulo)
 
         return {
@@ -389,13 +364,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Superbid lotes em quantidade → auctions.quantidade"
     )
-    parser.add_argument("--no-upload", action="store_true",
-                        help="Não sobe pro Supabase, só salva JSON")
-    parser.add_argument("--show-all",  action="store_true",
-                        help="Mostra todos os itens no terminal")
-    parser.add_argument("--category",  default="all",
-                        choices=["all"] + [c[0] for c in CATEGORIES],
-                        help="Raspa só uma categoria")
+    parser.add_argument("--no-upload", action="store_true")
+    parser.add_argument("--show-all",  action="store_true")
     parser.add_argument("--page-size", type=int, default=30)
     parser.add_argument("--output",    default="superbid_quantidade.json")
     args = parser.parse_args()
@@ -410,15 +380,10 @@ def main():
     session = requests.Session()
     session.headers.update(HEADERS)
 
-    # ── 1. Filtra categorias ──────────────────────────────────────────────
-    categories = CATEGORIES
-    if args.category != "all":
-        categories = [c for c in CATEGORIES if c[0] == args.category]
-
-    # ── 2. Coleta raw ─────────────────────────────────────────────────────
+    # ── 1. Coleta raw ─────────────────────────────────────────────────────
     print(f"{BOLD}  Coletando da API Superbid...{RESET}")
     raw_by_cat = []
-    for filter_value, display_name, tipo in categories:
+    for filter_value, display_name, tipo in CATEGORIES:
         offers = scrape_category(filter_value, display_name, session, args.page_size)
         for o in offers:
             raw_by_cat.append((o, tipo))
@@ -426,7 +391,7 @@ def main():
 
     print(f"\n  {GREEN}Total raw coletados: {len(raw_by_cat)}{RESET}")
 
-    # ── 3. Extração ───────────────────────────────────────────────────────
+    # ── 2. Extração ───────────────────────────────────────────────────────
     print(f"\n{BOLD}  Extraindo campos...{RESET}\n")
     items, falhos = [], 0
     for offer_raw, tipo in raw_by_cat:
@@ -438,7 +403,7 @@ def main():
 
     print(f"  {GREEN}OK  {len(items)} extraídos{RESET}  ·  {RED}{falhos} falhos{RESET}")
 
-    # ── 4. Deduplicação ───────────────────────────────────────────────────
+    # ── 3. Deduplicação ───────────────────────────────────────────────────
     seen: set = set()
     unique = []
     for item in items:
@@ -450,14 +415,14 @@ def main():
     items = unique
     items.sort(key=lambda x: x.get("valor_inicial") or 0, reverse=True)
 
-    # ── 5. Print ──────────────────────────────────────────────────────────
+    # ── 4. Print ──────────────────────────────────────────────────────────
     exibir = items if args.show_all else items[:10]
     for i, item in enumerate(exibir, 1):
         print_item(item, i, len(items))
     if not args.show_all and len(items) > 10:
         print(f"\n  {DIM}... {len(items) - 10} item(s) não exibido(s). Use --show-all{RESET}")
 
-    # ── 6. Resumo ─────────────────────────────────────────────────────────
+    # ── 5. Resumo ─────────────────────────────────────────────────────────
     por_tipo: dict = {}
     for item in items:
         k = item.get("tipo", "?")
@@ -476,7 +441,7 @@ def main():
         top = items[0]
         print(f"  Maior valor:      {fmt_brl(top['valor_inicial'])}  ({top['titulo'][:40]})")
 
-    # ── 7. Salva JSON ─────────────────────────────────────────────────────
+    # ── 6. Salva JSON ─────────────────────────────────────────────────────
     output_data = {
         "timestamp":   datetime.now(timezone.utc).isoformat(),
         "total_items": len(items),
@@ -487,7 +452,7 @@ def main():
         json.dump(output_data, f, ensure_ascii=False, indent=2, default=str)
     print(f"\n  JSON salvo em: {args.output}")
 
-    # ── 8. Upload Supabase ────────────────────────────────────────────────
+    # ── 7. Upload Supabase ────────────────────────────────────────────────
     if not args.no_upload:
         upload_to_supabase(items)
 
