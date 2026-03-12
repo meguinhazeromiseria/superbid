@@ -1,0 +1,38 @@
+name: Superbid Embarcacoes & Aeronaves
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # todo dia às 05:00 BRT (08:00 UTC)
+  workflow_dispatch:        # disparo manual pelo GitHub
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Rodar scraper
+        run: python scrapers/superbid/superbid_embarcacoes.py --output /tmp/superbid_embarcacoes.json
+
+      - name: Upload artefato (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: superbid-embarcacoes-${{ github.run_id }}
+          path: /tmp/superbid_embarcacoes.json
+          retention-days: 7
