@@ -50,12 +50,14 @@ SITE_URL = "https://exchange.superbid.net"
 CATEGORIES = [
     ("smartwatch", "Smartwatches", "smartwatch", "sub"),
     ("bebidas",    "Bebidas",      "bebida",     "cat"),
+    ("acessorios", "Acessórios",   "acessorio",  "sub"),
 ]
 
 # Threshold de "bom negócio" por tipo (R$/unidade)
 PRECO_BOM_NEGOCIO = {
     "smartwatch": 3.0,
     "bebida":     10.0,
+    "acessorio":  0.10,
     "_default":   3.0,
 }
 
