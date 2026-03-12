@@ -373,7 +373,6 @@ def normalize_to_db(item: dict) -> dict:
         "modalidade":        item["modalidade"],
         "valor_inicial":     item["valor_inicial"],
         "valor_atual":       item.get("valor_atual"),
-        "margem_nota":       "Valor subjetivo — depende de avaliação especializada",
         "data_encerramento": item["data_enc"],
         "link":              item["link"],
         "imagem_1":          imagens[0] if len(imagens) > 0 else None,
@@ -426,7 +425,7 @@ def print_item(item: dict, i: int, total: int):
     print(f"  {DIM}local:{RESET}      {item.get('cidade') or '?'} / {item.get('estado') or '?'}")
     print(f"  {DIM}valor:{RESET}      {fmt_brl(item['valor_inicial'])}  "
           f"(atual: {fmt_brl(item.get('valor_atual'))})")
-    print(f"  {DIM}margem:{RESET}     Subjetivo")
+
     print(f"  {DIM}data:{RESET}       {item['data_enc']}")
     print(f"  {DIM}imagens:{RESET}    {len(item.get('imagens') or [])}x")
     print(f"  {DIM}modalidade:{RESET} {item.get('modalidade') or '?'}")
