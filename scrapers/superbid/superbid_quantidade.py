@@ -39,9 +39,25 @@ API_URL  = "https://offer-query.superbid.net/seo/offers/"
 SITE_URL = "https://exchange.superbid.net"
 
 # pageNumber começa em 0 na API (confirmado no DevTools)
+#
+# Formato da tupla:
+#   (filter_value, display_name, tipo, filter_field)
+#
+# filter_field pode ser:
+#   "sub"  → product.subCategory.description:<valor>   (padrão anterior)
+#   "cat"  → product.subCategory.category.description:<valor>  (categoria pai)
+#
 CATEGORIES = [
-    ("smartwatch", "Smartwatches", "smartwatch"),
+    ("smartwatch", "Smartwatches", "smartwatch", "sub"),
+    ("bebidas",    "Bebidas",      "bebida",     "cat"),
 ]
+
+# Threshold de "bom negócio" por tipo (R$/unidade)
+PRECO_BOM_NEGOCIO = {
+    "smartwatch": 3.0,
+    "bebida":     10.0,
+    "_default":   3.0,
+}
 
 HEADERS = {
     "accept": "*/*",
@@ -56,7 +72,7 @@ HEADERS = {
 }
 
 RE_QTDE = re.compile(
-    r"(?:aprox\.?:?\s*)([\d.,]+)\s*(?:unidades?|un\.?|pç[s.]?|peças?|itens?|kgs?|kg|pares?)?",
+    r"(?:aprox\.?:?\s*)([\d.,]+)\s*(?:unidades?|un\.?|pç[s.]?|peças?|itens?|kgs?|kg|pares?|lts?|litros?)?",
     re.IGNORECASE,
 )
 
@@ -145,7 +161,8 @@ def extract_quantidade(titulo: str) -> Optional[int]:
 # ─── Scraper ──────────────────────────────────────────────────────────────────
 
 def scrape_category(filter_value: str, display_name: str,
-                    session: requests.Session, page_size: int = 30) -> list:
+                    session: requests.Session, page_size: int = 30,
+                    filter_field: str = "sub") -> list:
     items = []
     page_num = 0   # API usa pageNumber base-0
     consecutive_errors = 0
@@ -156,8 +173,13 @@ def scrape_category(filter_value: str, display_name: str,
 
     while True:
         try:
+            filter_prefix = (
+                "product.subCategory.category.description"
+                if filter_field == "cat"
+                else "product.subCategory.description"
+            )
             params = {
-                "filter":        f"product.subCategory.description:{filter_value}",
+                "filter":        f"{filter_prefix}:{filter_value}",
                 "keyword":       "aprox",
                 "urlSeo":        f"{SITE_URL}/busca/aprox",
                 "searchType":    "opened",
@@ -263,13 +285,14 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
         sub_cat          = (product.get("subCategory") or {}).get("description") or None
         quantidade_aprox = extract_quantidade(titulo)
 
-        # Preço por unidade e margem de revenda
-        # Bom negócio: até R$ 3,00/un | Preço de revenda estimado: R$ 15,00/un
+        # Preço por unidade — threshold varia por tipo
+        # smartwatch: bom até R$ 3,00/un | bebida: bom até R$ 10,00/un
+        preco_bom      = PRECO_BOM_NEGOCIO.get(tipo, PRECO_BOM_NEGOCIO["_default"])
         preco_unitario = None
         margem_revenda = None
         if quantidade_aprox and quantidade_aprox > 0 and valor_atual:
             preco_unitario = round(valor_atual / quantidade_aprox, 4)
-            margem_revenda = round((15.0 - preco_unitario) * quantidade_aprox, 2)
+            margem_revenda = round((preco_bom * 5 - preco_unitario) * quantidade_aprox, 2)
 
         return {
             "offer_id":         offer_id,
@@ -361,13 +384,14 @@ def print_item(item: dict, i: int, total: int):
     print(f"{'─'*68}")
     pu   = item.get("preco_unitario")
     marg = item.get("margem_revenda")
-    pu_str   = f"R$ {pu:.2f}/un {'✅' if pu and pu <= 3 else '❌'}" if pu else "?"
+    preco_bom = PRECO_BOM_NEGOCIO.get(item.get("tipo", ""), PRECO_BOM_NEGOCIO["_default"])
+    pu_str   = f"R$ {pu:.2f}/un {'✅' if pu and pu <= preco_bom else '❌'}" if pu else "?"
     marg_str = fmt_brl(marg) if marg else "?"
     print(f"  {DIM}tipo:{RESET}       {item.get('tipo') or '?'}")
     print(f"  {DIM}sub_cat:{RESET}    {item.get('sub_categoria') or '?'}")
     print(f"  {DIM}quantidade:{RESET} {f'~{qtde:,} un.' if qtde else '?'}")
-    print(f"  {DIM}preço/un:{RESET}   {pu_str}")
-    print(f"  {DIM}margem:{RESET}     {marg_str}  (revenda a R$ 15,00/un)")
+    print(f"  {DIM}preço/un:{RESET}   {pu_str}  (bom: ≤ R$ {preco_bom:.0f}/un)")
+    print(f"  {DIM}margem:{RESET}     {marg_str}")
     print(f"  {DIM}local:{RESET}      {item.get('cidade') or '?'} / {item.get('estado') or '?'}")
     print(f"  {DIM}valor:{RESET}      {fmt_brl(item['valor_inicial'])}  "
           f"(atual: {fmt_brl(item.get('valor_atual'))})")
@@ -401,8 +425,9 @@ def main():
     # ── 1. Coleta raw ─────────────────────────────────────────────────────
     print(f"{BOLD}  Coletando da API Superbid...{RESET}")
     raw_by_cat = []
-    for filter_value, display_name, tipo in CATEGORIES:
-        offers = scrape_category(filter_value, display_name, session, args.page_size)
+    for filter_value, display_name, tipo, filter_field in CATEGORIES:
+        offers = scrape_category(filter_value, display_name, session, args.page_size,
+                                 filter_field=filter_field)
         for o in offers:
             raw_by_cat.append((o, tipo))
         time.sleep(2)
