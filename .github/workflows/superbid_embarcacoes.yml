@@ -8,7 +8,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -26,13 +26,18 @@ jobs:
       - name: Instalar dependencias
         run: pip install requests
 
-      - name: Rodar scraper
+      - name: Rodar scraper embarcacoes
         run: python scrapers/superbid/superbid_embarcacoes.py --output /tmp/superbid_embarcacoes.json
 
-      - name: Upload artefato (debug)
+      - name: Rodar scraper quantidade
+        run: python scrapers/superbid/superbid_quantidade.py --output /tmp/superbid_quantidade.json
+
+      - name: Upload artefatos (debug)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: superbid-embarcacoes-${{ github.run_id }}
-          path: /tmp/superbid_embarcacoes.json
+          name: superbid-${{ github.run_id }}
+          path: |
+            /tmp/superbid_embarcacoes.json
+            /tmp/superbid_quantidade.json
           retention-days: 7
