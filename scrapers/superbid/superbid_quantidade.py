@@ -263,6 +263,14 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
         sub_cat          = (product.get("subCategory") or {}).get("description") or None
         quantidade_aprox = extract_quantidade(titulo)
 
+        # Preço por unidade e margem de revenda
+        # Bom negócio: até R$ 3,00/un | Preço de revenda estimado: R$ 15,00/un
+        preco_unitario = None
+        margem_revenda = None
+        if quantidade_aprox and quantidade_aprox > 0 and valor_atual:
+            preco_unitario = round(valor_atual / quantidade_aprox, 4)
+            margem_revenda = round((15.0 - preco_unitario) * quantidade_aprox, 2)
+
         return {
             "offer_id":         offer_id,
             "titulo":           titulo,
@@ -277,6 +285,8 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
             "imagens":          imagens,
             "modalidade":       modalidade,
             "quantidade_aprox": quantidade_aprox,
+            "preco_unitario":   preco_unitario,
+            "margem_revenda":   margem_revenda,
             "origem":           "Superbid",
         }
 
@@ -300,6 +310,8 @@ def normalize_to_db(item: dict) -> dict:
         "valor_inicial":     item["valor_inicial"],
         "valor_atual":       item.get("valor_atual"),
         "quantidade_aprox":  item.get("quantidade_aprox"),
+        "preco_unitario":    item.get("preco_unitario"),
+        "margem_revenda":    item.get("margem_revenda"),
         "data_encerramento": item["data_enc"],
         "link":              item["link"],
         "imagem_1":          imagens[0] if len(imagens) > 0 else None,
@@ -347,9 +359,15 @@ def print_item(item: dict, i: int, total: int):
     print(f"\n{'─'*68}")
     print(f"{BOLD}{YELLOW}[{i}/{total}] {titulo}{RESET}")
     print(f"{'─'*68}")
+    pu   = item.get("preco_unitario")
+    marg = item.get("margem_revenda")
+    pu_str   = f"R$ {pu:.2f}/un {'✅' if pu and pu <= 3 else '❌'}" if pu else "?"
+    marg_str = fmt_brl(marg) if marg else "?"
     print(f"  {DIM}tipo:{RESET}       {item.get('tipo') or '?'}")
     print(f"  {DIM}sub_cat:{RESET}    {item.get('sub_categoria') or '?'}")
     print(f"  {DIM}quantidade:{RESET} {f'~{qtde:,} un.' if qtde else '?'}")
+    print(f"  {DIM}preço/un:{RESET}   {pu_str}")
+    print(f"  {DIM}margem:{RESET}     {marg_str}  (revenda a R$ 15,00/un)")
     print(f"  {DIM}local:{RESET}      {item.get('cidade') or '?'} / {item.get('estado') or '?'}")
     print(f"  {DIM}valor:{RESET}      {fmt_brl(item['valor_inicial'])}  "
           f"(atual: {fmt_brl(item.get('valor_atual'))})")
