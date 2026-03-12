@@ -40,9 +40,9 @@ API_URL  = "https://offer-query.superbid.net/seo/offers/"
 SITE_URL = "https://exchange.superbid.net"
 
 CATEGORIES = [
-    ("embarcacoes-aeronaves/jet-skis",         "Jet-Skis",         "Jet-Ski"),
-    ("embarcacoes-aeronaves/lanchas-e-barcos",  "Lanchas e Barcos",  "Lancha/Barco"),
-    ("embarcacoes-aeronaves/avioes",            "Avioes",            "Aviao"),
+    ("embarcacoes-aeronaves/jet-skis",         "Jet-Skis",         "jet-ski"),
+    ("embarcacoes-aeronaves/lanchas-e-barcos",  "Lanchas e Barcos",  "lancha"),
+    ("embarcacoes-aeronaves/avioes",            "Avioes",            "aviao"),
 ]
 
 HEADERS = {
@@ -272,7 +272,8 @@ def extract(offer: dict, origem_label: str) -> Optional[dict]:
             "link":          link,
             "imagens":       imagens,
             "modalidade":    modalidade,
-            "origem":        origem_label,
+            "tipo":          origem_label,
+            "origem":        "Consultar",
         }
 
     except Exception as e:
@@ -287,7 +288,7 @@ def normalize_to_db(item: dict) -> dict:
     return {
         "titulo":            item["titulo"],
         "descricao":         None,
-        "tipo":              "outro",
+        "tipo":              item["tipo"],
         "marca":             None,
         "modelo":            None,
         "estado":            item.get("estado"),
