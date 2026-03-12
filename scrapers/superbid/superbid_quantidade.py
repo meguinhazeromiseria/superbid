@@ -3,15 +3,12 @@
 """
 superbid_quantidade.py — Superbid lotes em quantidade → auctions.quantidade
 
-Raspa categorias de lotes com múltiplas unidades (acessórios, vestuário, etc.)
-e sobe para a tabela auctions.quantidade no Supabase.
-
 Uso:
     python superbid_quantidade.py                   # coleta tudo e sobe
     python superbid_quantidade.py --no-upload       # só JSON
-    python superbid_quantidade.py --show-all        # mostra todos no terminal
-    python superbid_quantidade.py --output meu.json
+    python superbid_quantidade.py --show-all
     python superbid_quantidade.py --category acessorios
+    python superbid_quantidade.py --output meu.json
 """
 
 import json
@@ -39,22 +36,22 @@ DIM    = "\033[2m"
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-API_SEARCH_URL = "https://offer-query.superbid.net/seo/offers/"
-SITE_URL       = "https://exchange.superbid.net"
+API_URL  = "https://offer-query.superbid.net/seo/offers/"
+SITE_URL = "https://exchange.superbid.net"
 
-# Cada entrada: (filter_value, display_name, tipo_no_db)
-# filter_value é o valor de product.subCategory.description usado na busca
+# (filter_value, display_name, tipo_no_db)
+# filter_value = valor de product.subCategory.description na API
 CATEGORIES = [
-    ("acessorios",  "Acessórios",        "acessorio"),
-    ("vestuarios",  "Vestuários",        "vestuario"),
-    ("calcados",    "Calçados",          "calcado"),
-    ("eletronicos", "Eletrônicos",       "eletronico"),
-    ("informatica", "Informática",       "informatica"),
-    ("ferramentas", "Ferramentas",       "ferramenta"),
-    ("moveis",      "Móveis",            "movel"),
-    ("brinquedos",  "Brinquedos",        "brinquedo"),
-    ("alimentos",   "Alimentos",         "alimento"),
-    ("cosmeticos",  "Cosméticos",        "cosmetico"),
+    ("acessorios",  "Acessórios",   "acessorio"),
+    ("vestuarios",  "Vestuários",   "vestuario"),
+    ("calcados",    "Calçados",     "calcado"),
+    ("eletronicos", "Eletrônicos",  "eletronico"),
+    ("informatica", "Informática",  "informatica"),
+    ("ferramentas", "Ferramentas",  "ferramenta"),
+    ("moveis",      "Móveis",       "movel"),
+    ("brinquedos",  "Brinquedos",   "brinquedo"),
+    ("alimentos",   "Alimentos",    "alimento"),
+    ("cosmeticos",  "Cosméticos",   "cosmetico"),
 ]
 
 HEADERS = {
@@ -69,8 +66,6 @@ HEADERS = {
     ),
 }
 
-# Regex para extrair quantidade aproximada do título
-# Ex: "APROX.: 8.000 PÇS", "APROX. 1.000 BIJUTEIRAS", "LOTE COM APROX. 500 UNIDADES"
 RE_QTDE = re.compile(
     r"(?:aprox\.?:?\s*)([\d.,]+)\s*(?:unidades?|un\.?|pç[s.]?|peças?|itens?|kgs?|kg|pares?)?",
     re.IGNORECASE,
@@ -125,14 +120,15 @@ def parse_data_iso(raw) -> Optional[str]:
     return None
 
 
-def parse_cidade_estado(location_city: str) -> tuple:
-    """'São Paulo - SP' → ('São Paulo', 'SP')"""
-    if not location_city:
+def parse_cidade_estado(location: dict) -> tuple:
+    """Extrai cidade e estado do objeto product.location da API."""
+    city_str = location.get("city") or ""  # ex: "Goiânia - GO"
+    if not city_str:
         return None, None
-    m = re.match(r"^(.+?)\s*-\s*([A-Z]{2})\s*$", location_city.strip())
+    m = re.match(r"^(.+?)\s*-\s*([A-Z]{2})\s*$", city_str.strip())
     if m:
         return m.group(1).strip(), m.group(2)
-    return location_city.strip(), None
+    return city_str.strip(), None
 
 
 def parse_images_gallery(gallery_json: list) -> list:
@@ -147,7 +143,7 @@ def parse_images_gallery(gallery_json: list) -> list:
 
 
 def extract_quantidade(titulo: str) -> Optional[int]:
-    """Tenta extrair quantidade aproximada do título do lote."""
+    """Extrai quantidade aproximada do título: 'APROX.: 8.000 PÇS' → 8000."""
     m = RE_QTDE.search(titulo or "")
     if not m:
         return None
@@ -163,8 +159,9 @@ def extract_quantidade(titulo: str) -> Optional[int]:
 def scrape_category(filter_value: str, display_name: str,
                     session: requests.Session, page_size: int = 30) -> list:
     """
-    Busca lotes de uma subcategoria usando o endpoint de busca do Superbid.
-    Usa searchType=opened + filter por product.subCategory.description.
+    Parâmetros exatos confirmados via DevTools Network:
+    filter, keyword, urlSeo, searchType, locale, portalId,
+    requestOrigin, timeZoneId, orderBy, pageNumber, pageSize
     """
     items = []
     page_num = 1
@@ -177,18 +174,20 @@ def scrape_category(filter_value: str, display_name: str,
     while True:
         try:
             params = {
-                "searchType": "opened",
-                "filter":     f"product.subCategory.description:{filter_value}",
-                "pageNumber": page_num,
-                "pageSize":   page_size,
-                "orderBy":    "score:desc",
-                "locale":     "pt_BR",
-                "portalId":   "[2,15]",
-                "requestOrigin": "marketplace",
-                "timeZoneId": "America/Sao_Paulo",
+                "filter":         f"product.subCategory.description:{filter_value}",
+                "keyword":        "aprox",
+                "urlSeo":         f"{SITE_URL}/busca/aprox",
+                "searchType":     "opened",
+                "locale":         "pt_BR",
+                "portalId":       "[2,15]",
+                "requestOrigin":  "marketplace",
+                "timeZoneId":     "America/Sao_Paulo",
+                "orderBy":        "score:desc",
+                "pageNumber":     page_num,
+                "pageSize":       page_size,
             }
 
-            r = session.get(API_SEARCH_URL, params=params, timeout=30)
+            r = session.get(API_URL, params=params, timeout=30)
 
             if r.status_code != 200:
                 consecutive_errors += 1
@@ -246,37 +245,27 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
             return None
 
         product = offer.get("product") or {}
-        titulo  = (product.get("shortDesc") or offer.get("title") or "").strip()
+        titulo  = (product.get("shortDesc") or "").strip()
         if not titulo:
             return None
 
         link = f"{SITE_URL}/oferta/{offer_id}"
 
-        # Localização
-        location_city = (
-            product.get("locationCity")
-            or offer.get("locationCity")
-            or ""
-        )
-        cidade, estado = parse_cidade_estado(location_city)
+        # Localização vem em product.location.city = "Goiânia - GO"
+        location = product.get("location") or {}
+        cidade, estado = parse_cidade_estado(location)
 
-        # Valores
-        valor_inicial = parse_valor(
-            offer.get("startingBid")
-            or offer.get("currentBid")
-            or product.get("startingBid")
-        )
-        valor_atual = parse_valor(
-            offer.get("currentBid")
-            or offer.get("startingBid")
+        # Valores — a API retorna price e offerDetail
+        offer_detail  = offer.get("offerDetail") or {}
+        valor_inicial = parse_valor(offer_detail.get("initialBidValue") or offer.get("price"))
+        valor_atual   = parse_valor(
+            offer_detail.get("currentMinBid")
+            or offer_detail.get("initialBidValue")
+            or offer.get("price")
         )
 
         # Data encerramento
-        data_enc = parse_data_iso(
-            offer.get("endDate")
-            or offer.get("finishDate")
-            or product.get("endDate")
-        )
+        data_enc = parse_data_iso(offer.get("endDate") or offer.get("endDateTime"))
 
         # Imagens
         gallery = product.get("galleryJson") or []
@@ -293,30 +282,27 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
             else "leilao"
         )
 
+        # Subcategoria original do Superbid
+        sub_cat = (product.get("subCategory") or {}).get("description") or None
+
         # Quantidade extraída do título
         quantidade_aprox = extract_quantidade(titulo)
 
-        # Subcategoria original do Superbid (para referência)
-        sub_cat = (
-            (product.get("subCategory") or {}).get("description")
-            or ""
-        ).strip() or None
-
         return {
-            "offer_id":        offer_id,
-            "titulo":          titulo,
-            "tipo":            tipo,
-            "sub_categoria":   sub_cat,
-            "estado":          estado,
-            "cidade":          cidade,
-            "valor_inicial":   valor_inicial,
-            "valor_atual":     valor_atual,
-            "data_enc":        data_enc,
-            "link":            link,
-            "imagens":         imagens,
-            "modalidade":      modalidade,
+            "offer_id":         offer_id,
+            "titulo":           titulo,
+            "tipo":             tipo,
+            "sub_categoria":    sub_cat,
+            "estado":           estado,
+            "cidade":           cidade,
+            "valor_inicial":    valor_inicial,
+            "valor_atual":      valor_atual,
+            "data_enc":         data_enc,
+            "link":             link,
+            "imagens":          imagens,
+            "modalidade":       modalidade,
             "quantidade_aprox": quantidade_aprox,
-            "origem":          "Superbid",
+            "origem":           "Superbid",
         }
 
     except Exception as e:
@@ -366,7 +352,6 @@ def upload_to_supabase(items: list) -> dict:
     print(f"{BOLD}{'='*68}{RESET}\n")
 
     try:
-        # Usa o método genérico upsert() apontando para a tabela "quantidade"
         stats = db.upsert("quantidade", registros)
         total_s = stats.get("inserted", 0) + stats.get("updated", 0)
         print(f"\n  {GREEN}Enviados:        {total_s} "
@@ -410,7 +395,7 @@ def main():
                         help="Mostra todos os itens no terminal")
     parser.add_argument("--category",  default="all",
                         choices=["all"] + [c[0] for c in CATEGORIES],
-                        help="Raspa só uma categoria específica")
+                        help="Raspa só uma categoria")
     parser.add_argument("--page-size", type=int, default=30)
     parser.add_argument("--output",    default="superbid_quantidade.json")
     args = parser.parse_args()
@@ -477,7 +462,6 @@ def main():
     for item in items:
         k = item.get("tipo", "?")
         por_tipo[k] = por_tipo.get(k, 0) + 1
-
     com_qtde = sum(1 for i in items if i.get("quantidade_aprox"))
 
     print(f"\n\n{'='*68}")
