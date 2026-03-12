@@ -61,6 +61,14 @@ PRECO_BOM_NEGOCIO = {
     "_default":   3.0,
 }
 
+# Preço de revenda estimado por tipo (usado no cálculo de margem)
+PRECO_REVENDA = {
+    "smartwatch": 15.0,
+    "bebida":     50.0,   # revenda estimada (preco_bom * 5)
+    "acessorio":  5.0,    # R$ 5/un — elásticos, bijuterias, presilhas
+    "_default":   15.0,
+}
+
 HEADERS = {
     "accept": "*/*",
     "accept-language": "pt-BR,pt;q=0.9",
@@ -287,14 +295,17 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
         sub_cat          = (product.get("subCategory") or {}).get("description") or None
         quantidade_aprox = extract_quantidade(titulo)
 
-        # Preço por unidade — threshold varia por tipo
-        # smartwatch: bom até R$ 3,00/un | bebida: bom até R$ 10,00/un
+        # Preço por unidade — threshold e revenda variam por tipo
+        # smartwatch: bom ≤ R$3/un,  revenda R$15/un
+        # bebida:     bom ≤ R$10/un, revenda R$50/un
+        # acessorio:  bom ≤ R$0.10/un, revenda R$5/un
         preco_bom      = PRECO_BOM_NEGOCIO.get(tipo, PRECO_BOM_NEGOCIO["_default"])
+        preco_rev      = PRECO_REVENDA.get(tipo, PRECO_REVENDA["_default"])
         preco_unitario = None
         margem_revenda = None
         if quantidade_aprox and quantidade_aprox > 0 and valor_atual:
             preco_unitario = round(valor_atual / quantidade_aprox, 4)
-            margem_revenda = round((preco_bom * 5 - preco_unitario) * quantidade_aprox, 2)
+            margem_revenda = round((preco_rev - preco_unitario) * quantidade_aprox, 2)
 
         return {
             "offer_id":         offer_id,
