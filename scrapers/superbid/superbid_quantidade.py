@@ -38,22 +38,12 @@ DIM    = "\033[2m"
 API_URL  = "https://offer-query.superbid.net/seo/offers/"
 SITE_URL = "https://exchange.superbid.net"
 
-# pageNumber começa em 0 na API (confirmado no DevTools)
-#
-# Formato da tupla:
-#   (filter_value, display_name, tipo, filter_field)
-#
-# filter_field pode ser:
-#   "sub"  → product.subCategory.description:<valor>   (padrão anterior)
-#   "cat"  → product.subCategory.category.description:<valor>  (categoria pai)
-#
 CATEGORIES = [
     ("smartwatch", "Smartwatches", "smartwatch", "sub"),
     ("bebidas",    "Bebidas",      "bebida",     "cat"),
     ("acessorios", "Acessórios",   "acessorio",  "sub"),
 ]
 
-# Threshold de "bom negócio" por tipo (R$/unidade)
 PRECO_BOM_NEGOCIO = {
     "smartwatch": 3.0,
     "bebida":     10.0,
@@ -61,11 +51,18 @@ PRECO_BOM_NEGOCIO = {
     "_default":   3.0,
 }
 
-# Preço de revenda estimado por tipo (usado no cálculo de margem)
+# Threshold de premium por tipo (R$/unidade)
+PRECO_PREMIUM = {
+    "smartwatch": 3.0,
+    "bebida":     3.0,
+    "acessorio":  3.0,
+    "_default":   3.0,
+}
+
 PRECO_REVENDA = {
     "smartwatch": 15.0,
-    "bebida":     50.0,   # revenda estimada (preco_bom * 5)
-    "acessorio":  5.0,    # R$ 5/un — elásticos, bijuterias, presilhas
+    "bebida":     50.0,
+    "acessorio":  5.0,
     "_default":   15.0,
 }
 
@@ -136,7 +133,6 @@ def parse_data_iso(raw) -> Optional[str]:
 
 
 def parse_cidade_estado(location: dict) -> tuple:
-    """product.location.city = 'Goiânia - GO' → ('Goiânia', 'GO')"""
     city_str = (location.get("city") or "").strip()
     if not city_str:
         return None, None
@@ -174,7 +170,7 @@ def scrape_category(filter_value: str, display_name: str,
                     session: requests.Session, page_size: int = 30,
                     filter_field: str = "sub") -> list:
     items = []
-    page_num = 0   # API usa pageNumber base-0
+    page_num = 0
     consecutive_errors = 0
     max_errors = 3
 
@@ -295,10 +291,6 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
         sub_cat          = (product.get("subCategory") or {}).get("description") or None
         quantidade_aprox = extract_quantidade(titulo)
 
-        # Preço por unidade — threshold e revenda variam por tipo
-        # smartwatch: bom ≤ R$3/un,  revenda R$15/un
-        # bebida:     bom ≤ R$10/un, revenda R$50/un
-        # acessorio:  bom ≤ R$0.10/un, revenda R$5/un
         preco_bom      = PRECO_BOM_NEGOCIO.get(tipo, PRECO_BOM_NEGOCIO["_default"])
         preco_rev      = PRECO_REVENDA.get(tipo, PRECO_REVENDA["_default"])
         preco_unitario = None
@@ -334,11 +326,16 @@ def extract(offer: dict, tipo: str) -> Optional[dict]:
 # ─── Normalização para o DB ───────────────────────────────────────────────────
 
 def normalize_to_db(item: dict) -> dict:
-    imagens = item.get("imagens") or []
+    imagens       = item.get("imagens") or []
+    preco_unit    = item.get("preco_unitario")
+    tipo          = item.get("tipo", "_default")
+    limite_prem   = PRECO_PREMIUM.get(tipo, PRECO_PREMIUM["_default"])
+    is_premium    = preco_unit is not None and preco_unit < limite_prem
+
     return {
         "titulo":            item["titulo"],
         "descricao":         None,
-        "tipo":              item["tipo"],
+        "tipo":              tipo,
         "sub_categoria":     item.get("sub_categoria"),
         "estado":            item.get("estado"),
         "cidade":            item.get("cidade"),
@@ -346,7 +343,7 @@ def normalize_to_db(item: dict) -> dict:
         "valor_inicial":     item["valor_inicial"],
         "valor_atual":       item.get("valor_atual"),
         "quantidade_aprox":  item.get("quantidade_aprox"),
-        "preco_unitario":    item.get("preco_unitario"),
+        "preco_unitario":    preco_unit,
         "margem_revenda":    item.get("margem_revenda"),
         "data_encerramento": item["data_enc"],
         "link":              item["link"],
@@ -355,7 +352,7 @@ def normalize_to_db(item: dict) -> dict:
         "imagem_3":          imagens[2] if len(imagens) > 2 else None,
         "origem":            item.get("origem"),
         "ativo":             True,
-        "premium":           False,
+        "premium":           is_premium,
     }
 
 
@@ -397,13 +394,15 @@ def print_item(item: dict, i: int, total: int):
     print(f"{'─'*68}")
     pu   = item.get("preco_unitario")
     marg = item.get("margem_revenda")
-    preco_bom = PRECO_BOM_NEGOCIO.get(item.get("tipo", ""), PRECO_BOM_NEGOCIO["_default"])
-    pu_str   = f"R$ {pu:.2f}/un {'✅' if pu and pu <= preco_bom else '❌'}" if pu else "?"
+    tipo = item.get("tipo", "_default")
+    preco_bom  = PRECO_BOM_NEGOCIO.get(tipo, PRECO_BOM_NEGOCIO["_default"])
+    limite_prem = PRECO_PREMIUM.get(tipo, PRECO_PREMIUM["_default"])
+    pu_str   = f"R$ {pu:.2f}/un {'✅' if pu and pu <= preco_bom else '❌'}{' 🔒 premium' if pu and pu < limite_prem else ''}" if pu else "?"
     marg_str = fmt_brl(marg) if marg else "?"
-    print(f"  {DIM}tipo:{RESET}       {item.get('tipo') or '?'}")
+    print(f"  {DIM}tipo:{RESET}       {tipo}")
     print(f"  {DIM}sub_cat:{RESET}    {item.get('sub_categoria') or '?'}")
     print(f"  {DIM}quantidade:{RESET} {f'~{qtde:,} un.' if qtde else '?'}")
-    print(f"  {DIM}preço/un:{RESET}   {pu_str}  (bom: ≤ R$ {preco_bom:.0f}/un)")
+    print(f"  {DIM}preço/un:{RESET}   {pu_str}  (bom: ≤ R$ {preco_bom:.0f}/un  |  premium: < R$ {limite_prem:.0f}/un)")
     print(f"  {DIM}margem:{RESET}     {marg_str}")
     print(f"  {DIM}local:{RESET}      {item.get('cidade') or '?'} / {item.get('estado') or '?'}")
     print(f"  {DIM}valor:{RESET}      {fmt_brl(item['valor_inicial'])}  "
@@ -483,7 +482,9 @@ def main():
     for item in items:
         k = item.get("tipo", "?")
         por_tipo[k] = por_tipo.get(k, 0) + 1
-    com_qtde = sum(1 for i in items if i.get("quantidade_aprox"))
+    com_qtde    = sum(1 for i in items if i.get("quantidade_aprox"))
+    com_premium = sum(1 for i in items if i.get("preco_unitario") is not None
+                      and i["preco_unitario"] < PRECO_PREMIUM.get(i.get("tipo", "_default"), 3.0))
 
     print(f"\n\n{'='*68}")
     print(f"{BOLD}  RESUMO{RESET}")
@@ -493,6 +494,7 @@ def main():
         print(f"  {tipo:<20} {cnt}")
     print(f"  Com quantidade:   {com_qtde} ({com_qtde*100//len(items) if items else 0}%)")
     print(f"  Com imagem:       {sum(1 for i in items if i.get('imagens'))}")
+    print(f"  Premium (< R$3/un): {com_premium}")
     if items:
         top = items[0]
         print(f"  Maior valor:      {fmt_brl(top['valor_inicial'])}  ({top['titulo'][:40]})")
